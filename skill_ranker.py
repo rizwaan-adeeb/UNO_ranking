@@ -71,7 +71,7 @@ with col1:
     if logo_loaded:
         st.image(uno_logo, width=100)
 with col2:
-    st.title("UNO Ranking System")
+    st.title("UNO Ranking")
 
 # Create sidebar navigation
 st.sidebar.title("Navigation")
