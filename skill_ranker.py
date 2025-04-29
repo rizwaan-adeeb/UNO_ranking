@@ -3,9 +3,18 @@ import trueskill
 import json
 from pathlib import Path
 import pandas as pd
+from PIL import Image
 
 # Initialize TrueSkill environment
 env = trueskill.TrueSkill(draw_probability=0.0)
+
+# Load the UNO logo
+try:
+    uno_logo = Image.open("UNO_image.png")
+    logo_loaded = True
+except Exception as e:
+    logo_loaded = False
+    print(f"Error loading logo: {e}")
 
 
 def load_ratings():
@@ -56,52 +65,83 @@ def get_ratings_df(ratings):
 if "ratings" not in st.session_state:
     st.session_state.ratings = load_ratings()
 
-# App title
-st.title("UNO Ranking System")
+# App title with logo
+col1, col2 = st.columns([1, 4])
+with col1:
+    if logo_loaded:
+        st.image(uno_logo, width=100)
+with col2:
+    st.title("UNO Ranking System")
 
-# Display current rankings
-st.subheader("Current Rankings")
-rankings_df = get_ratings_df(st.session_state.ratings)
-st.dataframe(rankings_df)
+# Create sidebar navigation
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Go to", ["Rankings", "Add New Player", "Record Match Results"])
+
+# Display current rankings (always visible)
+if page == "Rankings":
+    st.header("Current Rankings")
+    rankings_df = get_ratings_df(st.session_state.ratings)
+
+    # Display rankings as a list with metrics
+    for i, row in rankings_df.iterrows():
+        col1, col2, col3 = st.columns([1, 2, 2])
+
+        with col1:
+            st.markdown(f"### #{i+1}")
+
+        with col2:
+            st.markdown(f"### {row['Player']}")
+
+        with col3:
+            st.markdown(f"### Rating: {row['Rating']:.2f}")
+            st.markdown(f"Uncertainty: ±{row['Uncertainty']:.2f}")
+
+        st.divider()
 
 # Add new player section
-st.subheader("Add New Player")
-new_player = st.text_input("New Player Name")
-if st.button("Add Player"):
-    if new_player and new_player not in st.session_state.ratings:
-        st.session_state.ratings[new_player] = env.Rating()
-        save_ratings(st.session_state.ratings)
-        st.success(f"Added player: {new_player}")
-        st.rerun()
+elif page == "Add New Player":
+    st.subheader("Add New Player")
+    new_player = st.text_input("New Player Name")
+    if st.button("Add Player"):
+        if new_player and new_player not in st.session_state.ratings:
+            st.session_state.ratings[new_player] = env.Rating()
+            save_ratings(st.session_state.ratings)
+            st.success(f"Added player: {new_player}")
+            st.rerun()
 
 # Record match results
-st.subheader("Record Match Results")
-players = list(st.session_state.ratings.keys())
-num_players = st.number_input(
-    "Number of players in match", min_value=2, max_value=len(players), value=2
-)
+elif page == "Record Match Results":
+    st.subheader("Record Match Results")
+    players = list(st.session_state.ratings.keys())
+    num_players = st.number_input(
+        "Number of players in match", min_value=2, max_value=len(players), value=2
+    )
 
-match_players = []
-for i in range(num_players):
-    player = st.selectbox(f"Player {i+1} (Position {i+1})", players, key=f"player_{i}")
-    match_players.append(player)
+    match_players = []
+    for i in range(num_players):
+        player = st.selectbox(
+            f"Player {i+1} (Position {i+1})", players, key=f"player_{i}"
+        )
+        match_players.append(player)
 
-if st.button("Record Match"):
-    if len(match_players) == len(set(match_players)):  # Check for duplicates
-        # Create teams and ratings lists
-        teams = [[player] for player in match_players]
-        team_ratings = [[st.session_state.ratings[player]] for player in match_players]
-        ranks = list(range(len(match_players)))
+    if st.button("Record Match"):
+        if len(match_players) == len(set(match_players)):  # Check for duplicates
+            # Create teams and ratings lists
+            teams = [[player] for player in match_players]
+            team_ratings = [
+                [st.session_state.ratings[player]] for player in match_players
+            ]
+            ranks = list(range(len(match_players)))
 
-        # Update ratings
-        updated_ratings = env.rate(team_ratings, ranks)
+            # Update ratings
+            updated_ratings = env.rate(team_ratings, ranks)
 
-        # Update the ratings dictionary
-        for i, player in enumerate(match_players):
-            st.session_state.ratings[player] = updated_ratings[i][0]
+            # Update the ratings dictionary
+            for i, player in enumerate(match_players):
+                st.session_state.ratings[player] = updated_ratings[i][0]
 
-        save_ratings(st.session_state.ratings)
-        st.success("Match recorded successfully!")
-        st.rerun()
-    else:
-        st.error("Each player can only appear once in a match!")
+            save_ratings(st.session_state.ratings)
+            st.success("Match recorded successfully!")
+            st.rerun()
+        else:
+            st.error("Each player can only appear once in a match!")
