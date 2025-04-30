@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import pandas as pd
 from PIL import Image
+from datetime import datetime
 
 # Initialize TrueSkill environment
 env = trueskill.TrueSkill(draw_probability=0.0)
@@ -36,14 +37,34 @@ def load_ratings():
     }
 
 
+def load_history():
+    """Load rating history from JSON file, or return empty history if file doesn't exist"""
+    history_file = Path("ratings_history.json")
+    if history_file.exists():
+        with open(history_file, "r") as f:
+            return json.load(f)
+    return []
+
+
 def save_ratings(ratings):
-    """Save ratings to JSON file"""
+    """Save ratings to JSON file and update history"""
+    # Save current ratings
     ratings_dict = {
         name: {"mu": float(r.mu), "sigma": float(r.sigma)}
         for name, r in ratings.items()
     }
     with open("ratings.json", "w") as f:
         json.dump(ratings_dict, f)
+
+    # Update history
+    history = load_history()
+    timestamp = datetime.now().isoformat()
+    history_entry = {"timestamp": timestamp, "ratings": ratings_dict}
+    history.append(history_entry)
+
+    # Save updated history
+    with open("ratings_history.json", "w") as f:
+        json.dump(history, f)
 
 
 def get_ratings_df(ratings):
@@ -64,6 +85,28 @@ def get_ratings_df(ratings):
 # Initialize session state
 if "ratings" not in st.session_state:
     st.session_state.ratings = load_ratings()
+if "history" not in st.session_state:
+    st.session_state.history = load_history()
+
+# Apply custom CSS to make the table larger
+st.markdown(
+    """
+<style>
+    .stDataFrame {
+        font-size: 20px !important;
+    }
+    .stDataFrame td, .stDataFrame th {
+        font-size: 22px !important;
+        padding: 15px !important;
+    }
+    .stDataFrame th {
+        background-color: #f0f2f6;
+        font-weight: bold;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 # App title with logo
 col1, col2 = st.columns([1, 4])
@@ -75,7 +118,9 @@ with col2:
 
 # Create sidebar navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Rankings", "Add New Player", "Record Match Results"])
+page = st.sidebar.radio(
+    "Go to", ["Rankings", "Rating History", "Add New Player", "Record Match Results"]
+)
 
 # Display current rankings (always visible)
 if page == "Rankings":
@@ -94,9 +139,49 @@ if page == "Rankings":
 
         with col3:
             st.markdown(f"### Rating: {row['Rating']:.2f}")
-            st.markdown(f"Uncertainty: ±{row['Uncertainty']:.2f}")
+            st.markdown(f"Uncertainty: ± {row['Uncertainty']:.2f}")
 
         st.divider()
+
+# Display rating history
+elif page == "Rating History":
+    st.header("Rating History")
+
+    if not st.session_state.history:
+        st.info("No rating history available yet.")
+    else:
+        # Let user select a player to view history
+        players = list(st.session_state.ratings.keys())
+        selected_player = st.selectbox("Select Player", players)
+
+        # Extract history data for the selected player
+        history_data = []
+        for entry in st.session_state.history:
+            if selected_player in entry["ratings"]:
+                history_data.append(
+                    {
+                        "Date": datetime.fromisoformat(entry["timestamp"]).strftime(
+                            "%Y-%m-%d %H:%M"
+                        ),
+                        "Rating": round(entry["ratings"][selected_player]["mu"], 2),
+                        "Uncertainty": round(
+                            entry["ratings"][selected_player]["sigma"], 2
+                        ),
+                    }
+                )
+
+        if history_data:
+            history_df = pd.DataFrame(history_data)
+
+            # Plot rating over time
+            st.subheader(f"{selected_player}'s Rating History")
+            st.line_chart(history_df.set_index("Date")["Rating"])
+
+            # Show history table
+            st.subheader("Detailed History")
+            st.dataframe(history_df, hide_index=True)
+        else:
+            st.info(f"No history available for {selected_player}.")
 
 # Add new player section
 elif page == "Add New Player":
@@ -106,6 +191,7 @@ elif page == "Add New Player":
         if new_player and new_player not in st.session_state.ratings:
             st.session_state.ratings[new_player] = env.Rating()
             save_ratings(st.session_state.ratings)
+            st.session_state.history = load_history()  # Reload history
             st.success(f"Added player: {new_player}")
             st.rerun()
 
@@ -141,6 +227,7 @@ elif page == "Record Match Results":
                 st.session_state.ratings[player] = updated_ratings[i][0]
 
             save_ratings(st.session_state.ratings)
+            st.session_state.history = load_history()  # Reload history
             st.success("Match recorded successfully!")
             st.rerun()
         else:
