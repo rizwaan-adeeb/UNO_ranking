@@ -71,15 +71,17 @@ def get_ratings_df(ratings):
     """Convert ratings to a pandas DataFrame for display"""
     data = []
     for name, rating in ratings.items():
+        conservative_rating = rating.mu - 3 * rating.sigma
         data.append(
             {
                 "Player": name,
                 "Rating": round(rating.mu, 2),
                 "Uncertainty": round(rating.sigma, 2),
+                "Conservative Rating": round(conservative_rating, 2),
             }
         )
     df = pd.DataFrame(data)
-    return df.sort_values("Rating", ascending=False).reset_index(drop=True)
+    return df.sort_values("Conservative Rating", ascending=False).reset_index(drop=True)
 
 
 # Initialize session state
@@ -127,6 +129,19 @@ if page == "Rankings":
     st.header("Current Rankings")
     rankings_df = get_ratings_df(st.session_state.ratings)
 
+    # Initialize the show_raw_ratings state if it doesn't exist
+    if "show_raw_ratings" not in st.session_state:
+        st.session_state.show_raw_ratings = False
+
+    # Toggle button for raw ratings
+    if st.button(
+        "Show Raw Ratings"
+        if not st.session_state.show_raw_ratings
+        else "Hide Raw Ratings"
+    ):
+        st.session_state.show_raw_ratings = not st.session_state.show_raw_ratings
+        st.rerun()  # Force a rerun to update the UI immediately
+
     # Display rankings as a list with metrics
     for i, row in rankings_df.iterrows():
         col1, col2, col3 = st.columns([1, 2, 2])
@@ -138,8 +153,12 @@ if page == "Rankings":
             st.markdown(f"### {row['Player']}")
 
         with col3:
-            st.markdown(f"### Rating: {row['Rating']:.2f}")
-            st.markdown(f"Uncertainty: ± {row['Uncertainty']:.2f}")
+            if st.session_state.show_raw_ratings:
+                st.markdown(
+                    f"### Rating: {row['Rating']:.2f} ± {row['Uncertainty']:.2f}"
+                )
+            else:
+                st.markdown(f"### Rating: {row['Conservative Rating']:.2f}")
 
         st.divider()
 
