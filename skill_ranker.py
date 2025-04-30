@@ -5,6 +5,8 @@ from pathlib import Path
 import pandas as pd
 from PIL import Image
 from datetime import datetime
+import os
+from github import Github
 
 # Initialize TrueSkill environment
 env = trueskill.TrueSkill(draw_probability=0.0)
@@ -18,8 +20,57 @@ except Exception as e:
     print(f"Error loading logo: {e}")
 
 
+def setup_github_integration():
+    """Setup GitHub integration using a personal access token"""
+    # Get GitHub token from Streamlit secrets or environment variable
+    github_token = (
+        st.secrets["github"]["token"]
+        if "github" in st.secrets
+        else os.environ.get("GITHUB_TOKEN")
+    )
+
+    if not github_token:
+        st.sidebar.warning(
+            "GitHub token not found. Data changes will not be persisted between sessions."
+        )
+        return None
+
+    try:
+        # Initialize GitHub client
+        g = Github(github_token)
+        # Get the repository (format: "username/repo-name")
+        repo_name = (
+            st.secrets["github"]["repo"]
+            if "github" in st.secrets
+            else os.environ.get("GITHUB_REPO")
+        )
+        repo = g.get_repo(repo_name)
+        return repo
+    except Exception as e:
+        st.sidebar.error(f"GitHub setup error: {e}")
+        return None
+
+
+# Initialize GitHub integration
+github_repo = setup_github_integration()
+
+
 def load_ratings():
-    """Load ratings from JSON file, or return default ratings if file doesn't exist"""
+    """Load ratings from GitHub or local JSON file"""
+    if github_repo:
+        try:
+            contents = github_repo.get_contents("ratings.json")
+            ratings_dict = json.loads(contents.decoded_content)
+            # Convert the loaded dictionary back to TrueSkill ratings
+            return {
+                name: trueskill.Rating(mu=r["mu"], sigma=r["sigma"])
+                for name, r in ratings_dict.items()
+            }
+        except Exception as e:
+            st.sidebar.warning(f"Could not load ratings from GitHub: {e}")
+            # Fall back to local file
+
+    # Local file fallback
     ratings_file = Path("ratings.json")
     if ratings_file.exists():
         with open(ratings_file, "r") as f:
@@ -38,7 +89,16 @@ def load_ratings():
 
 
 def load_history():
-    """Load rating history from JSON file, or return empty history if file doesn't exist"""
+    """Load rating history from GitHub or local JSON file"""
+    if github_repo:
+        try:
+            contents = github_repo.get_contents("ratings_history.json")
+            return json.loads(contents.decoded_content)
+        except Exception as e:
+            st.sidebar.warning(f"Could not load history from GitHub: {e}")
+            # Fall back to local file
+
+    # Local file fallback
     history_file = Path("ratings_history.json")
     if history_file.exists():
         with open(history_file, "r") as f:
@@ -47,24 +107,74 @@ def load_history():
 
 
 def save_ratings(ratings):
-    """Save ratings to JSON file and update history"""
-    # Save current ratings
+    """Save ratings to GitHub and update history"""
+    # Convert ratings to dictionary format
     ratings_dict = {
         name: {"mu": float(r.mu), "sigma": float(r.sigma)}
         for name, r in ratings.items()
     }
+
+    # Save to GitHub if available
+    if github_repo:
+        try:
+            # Save current ratings
+            try:
+                contents = github_repo.get_contents("ratings.json")
+                github_repo.update_file(
+                    contents.path,
+                    "Update player ratings",
+                    json.dumps(ratings_dict, indent=2),
+                    contents.sha,
+                )
+            except:
+                github_repo.create_file(
+                    "ratings.json",
+                    "Create player ratings file",
+                    json.dumps(ratings_dict, indent=2),
+                )
+
+            # Update history
+            timestamp = datetime.now().isoformat()
+            history_entry = {"timestamp": timestamp, "ratings": ratings_dict}
+
+            try:
+                contents = github_repo.get_contents("ratings_history.json")
+                history = json.loads(contents.decoded_content)
+                history.append(history_entry)
+                github_repo.update_file(
+                    contents.path,
+                    "Update ratings history",
+                    json.dumps(history, indent=2),
+                    contents.sha,
+                )
+            except:
+                # Create new history file with first entry
+                github_repo.create_file(
+                    "ratings_history.json",
+                    "Create ratings history file",
+                    json.dumps([history_entry], indent=2),
+                )
+
+            return True
+        except Exception as e:
+            st.sidebar.error(f"Error saving to GitHub: {e}")
+            # Fall back to local storage
+
+    # Local file fallback
     with open("ratings.json", "w") as f:
         json.dump(ratings_dict, f)
 
-    # Update history
+    # Update local history
     history = load_history()
     timestamp = datetime.now().isoformat()
     history_entry = {"timestamp": timestamp, "ratings": ratings_dict}
     history.append(history_entry)
 
-    # Save updated history
+    # Save updated history locally
     with open("ratings_history.json", "w") as f:
         json.dump(history, f)
+
+    return True
 
 
 def get_ratings_df(ratings):
@@ -251,3 +361,9 @@ elif page == "Record Match Results":
             st.rerun()
         else:
             st.error("Each player can only appear once in a match!")
+
+# Add GitHub status indicator in sidebar
+if github_repo:
+    st.sidebar.success("GitHub integration active: Data will persist between sessions")
+else:
+    st.sidebar.warning("GitHub integration inactive: Data may be lost between sessions")
