@@ -231,7 +231,14 @@ with col2:
 # Create sidebar navigation
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
-    "Go to", ["Rankings", "Rating History", "Add New Player", "Record Match Results"]
+    "Go to",
+    [
+        "Rankings",
+        "Rating History",
+        "Add New Player",
+        "Record Match Results",
+        "Undo Last Match",
+    ],
 )
 
 # Display current rankings (always visible)
@@ -362,8 +369,95 @@ elif page == "Record Match Results":
         else:
             st.error("Each player can only appear once in a match!")
 
+# Add a new page for undoing the last match
+elif page == "Undo Last Match":
+    st.subheader("Undo Last Match")
+
+    if len(st.session_state.history) <= 1:
+        st.warning("No matches to undo. History contains only initial ratings.")
+    else:
+        # Create simplified dataframes for display
+        current_ratings = st.session_state.ratings
+        current_df = get_ratings_df(current_ratings)
+        # Keep only Player and Conservative Rating columns
+        current_display_df = current_df[["Player", "Conservative Rating"]].copy()
+        current_display_df.rename(
+            columns={"Conservative Rating": "Rating"}, inplace=True
+        )
+        current_display_df.insert(0, "Rank", range(1, len(current_display_df) + 1))
+
+        # Show the current ratings
+        st.write("Current Rankings:")
+        st.dataframe(current_display_df, hide_index=True)
+
+        # Show the previous ratings
+        previous_ratings = {
+            name: trueskill.Rating(mu=r["mu"], sigma=r["sigma"])
+            for name, r in st.session_state.history[-2]["ratings"].items()
+        }
+        previous_df = get_ratings_df(previous_ratings)
+        # Keep only Player and Conservative Rating columns
+        previous_display_df = previous_df[["Player", "Conservative Rating"]].copy()
+        previous_display_df.rename(
+            columns={"Conservative Rating": "Rating"}, inplace=True
+        )
+        previous_display_df.insert(0, "Rank", range(1, len(previous_display_df) + 1))
+
+        st.write("Previous Rankings (after undo):")
+        st.dataframe(previous_display_df, hide_index=True)
+
+        if st.button("Confirm Undo Last Match"):
+            # Restore previous ratings
+            st.session_state.ratings = previous_ratings
+
+            # Remove the last entry from history
+            if github_repo:
+                try:
+                    contents = github_repo.get_contents("ratings_history.json")
+                    history = json.loads(contents.decoded_content)
+                    history.pop()  # Remove the last entry
+                    github_repo.update_file(
+                        contents.path,
+                        "Undo last match by removing last history entry",
+                        json.dumps(history, indent=2),
+                        contents.sha,
+                    )
+
+                    # Update ratings.json
+                    ratings_dict = {
+                        name: {"mu": float(r.mu), "sigma": float(r.sigma)}
+                        for name, r in previous_ratings.items()
+                    }
+                    contents = github_repo.get_contents("ratings.json")
+                    github_repo.update_file(
+                        contents.path,
+                        "Restore previous ratings after undo",
+                        json.dumps(ratings_dict, indent=2),
+                        contents.sha,
+                    )
+
+                except Exception as e:
+                    st.error(f"Error undoing match in GitHub: {e}")
+                    st.stop()
+            else:
+                # Local file handling
+                history = st.session_state.history
+                history.pop()  # Remove the last entry
+                with open("ratings_history.json", "w") as f:
+                    json.dump(history, f)
+
+                # Save the restored ratings
+                ratings_dict = {
+                    name: {"mu": float(r.mu), "sigma": float(r.sigma)}
+                    for name, r in previous_ratings.items()
+                }
+                with open("ratings.json", "w") as f:
+                    json.dump(ratings_dict, f)
+
+            st.session_state.history = history
+            st.success("Successfully undid the last match!")
+            st.rerun()
+
 # Add GitHub status indicator in sidebar
-if github_repo:
-    st.sidebar.success("GitHub integration active: Data will persist between sessions")
-else:
+if not github_repo:
     st.sidebar.warning("GitHub integration inactive: Data may be lost between sessions")
